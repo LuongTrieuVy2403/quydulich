@@ -1,637 +1,169 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-  <base target="_top">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Quản Lý Quỹ Du Lịch</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
-  
-  <style>
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    
-    body {
-      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      margin: 0; padding: 16px 12px 40px 12px;
-      background: #06090f url('https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=1920&auto=format&fit=crop') no-repeat center center fixed;
-      background-size: cover; color: #f1f5f9; min-height: 100vh; position: relative;
+const { google } = require('googleapis');
+
+// ID Google Sheet của bạn
+const SPREADSHEET_ID = "11PVVu-vBtoQ-Rhip3wviDxtq7Vp-xdNytw1VwwmzWog";
+const ADMIN_PASSWORD = "24032004";
+
+function getSheetsClient() {
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      private_key: process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined,
+    },
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+  return google.sheets({ version: 'v4', auth });
+}
+
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  const { action } = req.query;
+  const sheets = getSheetsClient();
+
+  try {
+    // 1. Lấy Tổng Quan
+    if (action === 'getSummary' && req.method === 'GET') {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'TongQuan!B1:B3',
+      });
+      const rows = response.data.values || [];
+      return res.status(200).json({
+        tongQuy: Number(rows[0]?.[0]) || 0,
+        daChi: Number(rows[1]?.[0]) || 0,
+        conLai: Number(rows[2]?.[0]) || 0,
+      });
     }
 
-    body::before {
-      content: ""; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(6, 9, 15, 0.92);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      z-index: -1;
+    // 2. Lấy danh sách thành viên (Cột A sheet ThanhVien)
+    if (action === 'getMemberList' && req.method === 'GET') {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'ThanhVien!A2:A100',
+      });
+      const rows = response.data.values || [];
+      const members = rows.map(r => r[0]).filter(Boolean);
+      return res.status(200).json(members);
     }
 
-    .container { max-width: 460px; margin: 0 auto; width: 100%; }
+    // 3. Tra cứu số dư cá nhân
+    if (action === 'getMemberBalance' && req.method === 'GET') {
+      const { name } = req.query;
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'ThanhVien!A2:D100',
+      });
+      const rows = response.data.values || [];
+      const keyword = (name || '').toLowerCase().trim();
 
-    /* HEADER */
-    .brand-header { text-align: center; margin-top: 10px; margin-bottom: 24px; }
-    .brand-logo {
-      font-family: 'Space Grotesk', sans-serif;
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-      color: #ffffff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    }
-    .brand-logo span {
-      color: #38bdf8;
-      text-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
-    }
-    .brand-sub {
-      font-size: 11px;
-      color: #94a3b8;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      font-weight: 600;
-      margin-top: 6px;
-    }
-
-    /* CARD UI */
-    .card {
-      background: rgba(15, 23, 42, 0.75);
-      border: 1px solid rgba(56, 189, 248, 0.15);
-      border-radius: 16px;
-      padding: 20px;
-      margin-bottom: 16px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(8px);
-    }
-
-    h2, h3 {
-      font-family: 'Space Grotesk', sans-serif;
-      font-size: 13px;
-      color: #38bdf8;
-      margin-top: 0;
-      margin-bottom: 16px;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    /* SUMMARY ROW */
-    .info-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12px;
-      font-size: 13.5px;
-      color: #94a3b8;
-    }
-    .info-row strong { color: #f8fafc; font-weight: 600; font-size: 14.5px; }
-    .balance { font-weight: 700; color: #34d399 !important; text-shadow: 0 0 12px rgba(52, 211, 153, 0.3); }
-    .spent { font-weight: 700; color: #f87171 !important; }
-
-    .loading-text { opacity: 0.4; font-style: italic; }
-
-    /* FORM INPUTS */
-    label {
-      display: block;
-      font-size: 11px;
-      color: #cbd5e1;
-      text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-      margin-top: 14px;
-    }
-    label:first-of-type { margin-top: 0; }
-
-    input, select {
-      width: 100%;
-      height: 48px;
-      padding: 10px 14px;
-      background: rgba(3, 7, 18, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 10px;
-      color: #f8fafc;
-      font-size: 14.5px;
-      outline: none;
-      transition: all 0.2s ease;
-      font-family: 'Plus Jakarta Sans', sans-serif;
-    }
-    input:focus, select:focus {
-      border-color: #38bdf8;
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-      background: rgba(3, 7, 18, 0.95);
-    }
-
-    /* MEMBER SELECTOR */
-    .member-select-box {
-      background: rgba(3, 7, 18, 0.5);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      padding: 8px;
-      max-height: 200px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    
-    .member-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 14px;
-      font-size: 14px;
-      color: #e2e8f0;
-      cursor: pointer;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.04);
-      border-radius: 8px;
-      user-select: none;
-      transition: background 0.15s;
-    }
-    .member-item:active { background: rgba(56, 189, 248, 0.1); }
-    .member-item input[type="checkbox"] {
-      width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: #38bdf8; flex-shrink: 0;
-    }
-    .member-item.all-option {
-      font-weight: 700; color: #38bdf8;
-      background: rgba(56, 189, 248, 0.06);
-      border-color: rgba(56, 189, 248, 0.2);
-    }
-
-    /* BUTTONS */
-    .btn-primary {
-      width: 100%;
-      height: 48px;
-      margin-top: 16px;
-      background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%);
-      color: #0f172a;
-      font-family: 'Space Grotesk', sans-serif;
-      font-weight: 700;
-      font-size: 13.5px;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      box-shadow: 0 4px 16px rgba(56, 189, 248, 0.3);
-      transition: transform 0.1s ease, opacity 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .btn-primary:active { transform: scale(0.98); }
-    .btn-green {
-      background: linear-gradient(135deg, #34d399 0%, #059669 100%);
-      color: #0f172a;
-      box-shadow: 0 4px 16px rgba(52, 211, 153, 0.3);
-    }
-
-    .btn-toggle {
-      width: 100%;
-      height: 46px;
-      background: rgba(56, 189, 248, 0.04);
-      border: 1px dashed rgba(56, 189, 248, 0.35);
-      color: #38bdf8;
-      padding: 0 10px;
-      border-radius: 10px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-      margin-bottom: 16px;
-      transition: background 0.2s;
-    }
-    .btn-toggle:active { background: rgba(56, 189, 248, 0.1); }
-
-    /* ADMIN PANEL & TABS */
-    .admin-section { display: none; border-color: rgba(56, 189, 248, 0.4); }
-
-    .tab-buttons { display: flex; gap: 8px; margin-bottom: 14px; }
-    .tab-btn {
-      flex: 1; height: 42px;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: #64748b; border-radius: 8px;
-      font-size: 12px; font-weight: 700; cursor: pointer;
-      transition: all 0.2s;
-    }
-    .tab-btn.active {
-      background: rgba(56, 189, 248, 0.12);
-      border-color: #38bdf8; color: #38bdf8;
-    }
-
-    /* TABLE */
-    .table-container { width: 100%; overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-    th {
-      font-family: 'Space Grotesk', sans-serif;
-      font-size: 10.5px; color: #64748b;
-      text-transform: uppercase;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-      padding: 10px 6px; text-align: left;
-      letter-spacing: 0.5px;
-    }
-    td {
-      padding: 12px 6px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      font-size: 13px; word-break: break-word; color: #e2e8f0;
-    }
-
-    .result-box {
-      background: rgba(56, 189, 248, 0.05);
-      border: 1px solid rgba(56, 189, 248, 0.2);
-      padding: 14px; border-radius: 10px; margin-top: 14px; display: none;
-    }
-
-    /* MODAL */
-    .modal-overlay {
-      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(3, 7, 18, 0.85); backdrop-filter: blur(8px);
-      z-index: 10000; justify-content: center; align-items: center; padding: 16px;
-    }
-    .modal-content {
-      background: #0f172a; border: 1px solid #34d399;
-      box-shadow: 0 0 40px rgba(52, 211, 153, 0.2);
-      border-radius: 16px; width: 100%; max-width: 360px; padding: 20px; text-align: center;
-    }
-    .modal-content img { width: 100%; max-width: 240px; border-radius: 10px; margin: 14px 0; background: #fff; padding: 8px; }
-    .btn-close {
-      background: #f87171; color: #fff; border: none; height: 46px; border-radius: 10px;
-      font-weight: 700; font-size: 12.5px; cursor: pointer; width: 100%; margin-top: 14px;
-    }
-
-    /* TOAST */
-    #toast {
-      visibility: hidden; min-width: 280px; max-width: 90%;
-      background-color: #0f172a; color: #fff; text-align: center; border-radius: 10px;
-      padding: 14px 18px; position: fixed; z-index: 9999; left: 50%; top: 20px;
-      transform: translateX(-50%) translateY(-20px) scale(0.95);
-      font-size: 13px; font-weight: 600;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(8px); border: 1px solid rgba(56, 189, 248, 0.3);
-      opacity: 0; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    #toast.show { visibility: visible; opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
-    #toast.success { border-color: #34d399; color: #34d399; }
-    #toast.error { border-color: #f87171; color: #f87171; }
-    #toast.warning { border-color: #fbbf24; color: #fbbf24; }
-  </style>
-</head>
-<body>
-
-  <div id="toast"></div>
-
-  <div id="qrModal" class="modal-overlay">
-    <div class="modal-content">
-      <h3 style="border:none; padding:0; color:#34d399; margin-bottom: 4px;">QUÉT MÃ THANH TOÁN</h3>
-      <p style="font-size: 11.5px; color: #94a3b8; margin: 0;">Mở App Ngân Hàng / VCB để quét mã</p>
-      
-      <img id="qrImage" src="" alt="Mã VietQR">
-      
-      <div style="font-size: 13px; text-align: left; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 8px; display: flex; flex-direction: column; gap: 6px;">
-        <div>Thành viên: <strong id="qrMember" style="color: #38bdf8;">-</strong></div>
-        <div>Số tiền: <strong id="qrAmount" style="color: #34d399;">-</strong></div>
-        <div>Nội dung: <strong id="qrMemo" style="color: #fbbf24;">-</strong></div>
-      </div>
-
-      <button class="btn-close" onclick="closeQRModal()">ĐÓNG BẢNG QR</button>
-    </div>
-  </div>
-
-  <div class="container">
-    
-    <div class="brand-header">
-      <div class="brand-logo">🌐 QUỸ <span>DU LỊCH</span></div>
-      <div class="brand-sub">Hệ Thống Quản Lý Ngân Sách Nhóm</div>
-    </div>
-
-    <!-- TỔNG QUAN -->
-    <div class="card">
-      <h2>Tổng Quan Quỹ</h2>
-      <div class="info-row">
-        <span>Tổng quỹ đã gom:</span>
-        <strong id="tongQuy" class="loading-text">Đang tải...</strong>
-      </div>
-      <div class="info-row">
-        <span>Tổng đã chi tiêu:</span>
-        <strong id="daChi" class="spent loading-text">Đang tải...</strong>
-      </div>
-      <div class="info-row" style="margin-bottom:0; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
-        <span>Số dư hiện tại:</span>
-        <span id="conLai" class="balance loading-text" style="font-size: 18px;">Đang tải...</span>
-      </div>
-    </div>
-
-    <!-- TRA CỨU SỐ DƯ CÁ NHÂN -->
-    <div class="card">
-      <h3>Tra Cứu Cá Nhân</h3>
-      <label>Tên thành viên</label>
-      <input type="text" id="searchName" placeholder="Nhập tên (VD: Quân, Vỹ, Tài...)" autocomplete="off">
-      <button class="btn-primary" id="btnSearch" onclick="searchMember()">Xem Số Dư</button>
-
-      <div id="searchResult" class="result-box">
-        <div class="info-row"><span>Thành viên:</span><strong id="resName" style="color:#38bdf8;">-</strong></div>
-        <div class="info-row"><span>Đã đóng:</span><strong id="resDong">0 đ</strong></div>
-        <div class="info-row"><span>Đã sử dụng:</span><strong id="resDung" class="spent">0 đ</strong></div>
-        <div class="info-row"><span>Còn dư:</span><strong id="resDu" class="balance">0 đ</strong></div>
-      </div>
-    </div>
-
-    <button class="btn-toggle" onclick="toggleAdminPanel()">⚡ BẬT / TẮT KHU VỰC THỦ QUỸ</button>
-
-    <!-- KHU VỰC THỦ QUỸ -->
-    <div class="card admin-section" id="adminPanel">
-      
-      <div class="tab-buttons">
-        <button class="tab-btn active" id="tabSubBtn" onclick="switchTab('sub')">➖ Trừ Tiền Chi</button>
-        <button class="tab-btn" id="tabAddBtn" onclick="switchTab('add')">➕ Cộng Tiền Đóng</button>
-      </div>
-
-      <label>Mật khẩu Admin</label>
-      <input type="password" id="adminPass" placeholder="••••••••">
-
-      <!-- TAB 1: TRỪ TIỀN -->
-      <div id="subExpenseTab">
-        <label>Nội dung chi</label>
-        <input type="text" id="desc" placeholder="VD: Tiền ăn hải sản, vé xe...">
-
-        <label>Áp dụng cho</label>
-        <div class="member-select-box" id="memberCheckboxGroup">
-          <label class="member-item all-option">
-            <input type="checkbox" id="checkAll" onchange="toggleSelectAll(this)">
-            <span>Chia đều Tất Cả thành viên</span>
-          </label>
-          <div id="individualMembers" style="display: flex; flex-direction: column; gap: 6px;"></div>
-        </div>
-
-        <label>Số tiền chi (VNĐ)</label>
-        <input type="text" id="amount" inputmode="numeric" placeholder="0" oninput="formatCurrencyInput(this)">
-
-        <label>Ghi chú (Tùy chọn)</label>
-        <input type="text" id="note" placeholder="Thêm chi tiết...">
-
-        <button id="btnSubmitExpense" class="btn-primary" onclick="submitExpense()">XÁC NHẬN TRỪ TIỀN</button>
-      </div>
-
-      <!-- TAB 2: CỘNG TIỀN NẠP -->
-      <div id="addContributionTab" style="display: none;">
-        <label>Thành viên đóng tiền</label>
-        <select id="depositMemberSelect"></select>
-
-        <label>Số tiền đóng thêm (VNĐ)</label>
-        <input type="text" id="depositAmount" inputmode="numeric" placeholder="0" oninput="formatCurrencyInput(this)">
-
-        <button id="btnSubmitDeposit" class="btn-primary btn-green" onclick="submitDeposit()">XÁC NHẬN CỘNG TIỀN</button>
-      </div>
-
-    </div>
-
-    <!-- LỊCH SỬ CHI TIÊU -->
-    <div class="card">
-      <h3>Lịch Sử Chi Tiêu</h3>
-      <div class="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th style="width: 22%;">Giờ</th>
-              <th style="width: 34%;">Nội dung</th>
-              <th style="width: 22%;">Áp dụng</th>
-              <th style="width: 22%; text-align: right;">Số tiền</th>
-            </tr>
-          </thead>
-          <tbody id="historyTable">
-            <tr><td colspan="4" style="text-align: center; color: #64748b;">Đang tải lịch sử...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-  </div>
-
-  <script>
-    var BANK_ID = "VCB"; 
-    var ACCOUNT_NO = "1066287627"; 
-    var ACCOUNT_NAME = "LUONG TRIEU VY"; 
-
-    var currentSummary = { tongQuy: 0, daChi: 0, conLai: 0 };
-    var toastTimeout;
-
-    function removeVietnameseTones(str) {
-      if (!str) return '';
-      str = str.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g,"a");
-      str = str.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g,"e");
-      str = str.replace(/ì|í|ị|ỉ|ĩ/g,"i");
-      str = str.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g,"o");
-      str = str.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g,"u");
-      str = str.replace(/ỳ|ý|ỵ|ỷ|ỹ/g,"y");
-      str = str.replace(/đ/g,"d");
-      return str;
-    }
-
-    function formatCurrencyInput(input) {
-      var rawValue = input.value.replace(/\D/g, '');
-      if (!rawValue) { input.value = ''; return; }
-      input.value = Number(rawValue).toLocaleString('en-US');
-    }
-
-    function getCleanNumber(inputId) {
-      var val = document.getElementById(inputId).value;
-      return Number(val.replace(/\D/g, '')) || 0;
-    }
-
-    function showToast(msg, type) {
-      type = type || 'info';
-      var toast = document.getElementById('toast');
-      toast.innerText = msg;
-      toast.className = 'show ' + type;
-      clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(function() { toast.className = ''; }, 3200);
-    }
-
-    function fmt(num) { return new Intl.NumberFormat('vi-VN').format(num || 0) + ' đ'; }
-
-    function updateSummaryUI(tongQuy, daChi, conLai) {
-      currentSummary.tongQuy = tongQuy;
-      currentSummary.daChi = daChi;
-      currentSummary.conLai = conLai;
-      document.getElementById('tongQuy').innerText = fmt(tongQuy);
-      document.getElementById('daChi').innerText = fmt(daChi);
-      document.getElementById('conLai').innerText = fmt(conLai);
-      document.getElementById('tongQuy').classList.remove('loading-text');
-      document.getElementById('daChi').classList.remove('loading-text');
-      document.getElementById('conLai').classList.remove('loading-text');
-    }
-
-    function toggleAdminPanel() {
-      var panel = document.getElementById('adminPanel');
-      var isHidden = (panel.style.display === 'none' || panel.style.display === '');
-      panel.style.display = isHidden ? 'block' : 'none';
-      if (isHidden) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-
-    function switchTab(type) {
-      var tabSub = document.getElementById('subExpenseTab');
-      var tabAdd = document.getElementById('addContributionTab');
-      var btnSub = document.getElementById('tabSubBtn');
-      var btnAdd = document.getElementById('tabAddBtn');
-      if (type === 'sub') {
-        tabSub.style.display = 'block'; tabAdd.style.display = 'none';
-        btnSub.classList.add('active'); btnAdd.classList.remove('active');
-      } else {
-        tabSub.style.display = 'none'; tabAdd.style.display = 'block';
-        btnAdd.classList.add('active'); btnSub.classList.remove('active');
-      }
-    }
-
-    function toggleSelectAll(master) {
-      document.querySelectorAll('.member-single-check').forEach(cb => cb.checked = master.checked);
-    }
-
-    function checkMasterStatus() {
-      var allChecked = true;
-      document.querySelectorAll('.member-single-check').forEach(cb => { if (!cb.checked) allChecked = false; });
-      document.getElementById('checkAll').checked = allChecked;
-    }
-
-    async function loadData() {
-      try {
-        const resSum = await fetch('/api/server?action=getSummary');
-        const d = await resSum.json();
-        updateSummaryUI(d.tongQuy, d.daChi, d.conLai);
-
-        const resMem = await fetch('/api/server?action=getMemberList');
-        const members = await resMem.json();
-        let htmlCheckbox = '', htmlSelect = '<option value="">-- Chọn thành viên --</option>';
-        members.forEach(m => {
-          htmlCheckbox += `<label class="member-item"><input type="checkbox" class="member-single-check" value="${m}" onchange="checkMasterStatus()"><span>${m}</span></label>`;
-          htmlSelect += `<option value="${m}">${m}</option>`;
-        });
-        document.getElementById('individualMembers').innerHTML = htmlCheckbox;
-        document.getElementById('depositMemberSelect').innerHTML = htmlSelect;
-
-        const resHist = await fetch('/api/server?action=getRecentExpenses');
-        const list = await resHist.json();
-        let html = list.length === 0 ? '<tr><td colspan="4" style="text-align: center; color: #64748b;">Chưa có lịch sử chi tiêu</td></tr>' : '';
-        list.forEach(item => {
-          html += `<tr><td style="color:#64748b;">${item.time}</td><td><b>${item.description}</b></td><td style="color:#38bdf8;">${item.target}</td><td class="spent" style="text-align: right;">-${fmt(item.amount)}</td></tr>`;
-        });
-        document.getElementById('historyTable').innerHTML = html;
-      } catch (err) {
-        console.error(err);
-      }
-    }
-
-    async function searchMember() {
-      var name = document.getElementById('searchName').value;
-      if (!name) return showToast("⚠️ Vui lòng nhập tên thành viên!", "warning");
-      var btn = document.getElementById('btnSearch');
-      btn.innerText = "ĐANG TÌM..."; btn.disabled = true;
-
-      try {
-        const res = await fetch(`/api/server?action=getMemberBalance&name=${encodeURIComponent(name)}`);
-        const data = await res.json();
-        btn.innerText = "Xem Số Dư"; btn.disabled = false;
-        if (data.found) {
-          document.getElementById('resName').innerText = data.name;
-          document.getElementById('resDong').innerText = fmt(data.daDong);
-          document.getElementById('resDung').innerText = fmt(data.daDung);
-          document.getElementById('resDu').innerText = fmt(data.conDu);
-          document.getElementById('searchResult').style.display = 'block';
-          showToast("✨ Đã tìm thấy thông tin!", "success");
-        } else {
-          showToast("❌ Không tìm thấy thành viên!", "error");
-          document.getElementById('searchResult').style.display = 'none';
+      for (let row of rows) {
+        const fullName = row[0] ? row[0].toString().toLowerCase() : '';
+        if (fullName.includes(keyword)) {
+          return res.status(200).json({
+            found: true,
+            name: row[0],
+            daDong: Number(row[1]) || 0,
+            daDung: Number(row[2]) || 0,
+            conDu: Number(row[3]) || 0,
+          });
         }
-      } catch (e) {
-        btn.innerText = "Xem Số Dư"; btn.disabled = false;
-        showToast("Lỗi kết nối server!", "error");
       }
+      return res.status(200).json({ found: false });
     }
 
-    async function submitExpense() {
-      var pass = document.getElementById('adminPass').value;
-      var desc = document.getElementById('desc').value;
-      var amount = getCleanNumber('amount');
-      var note = document.getElementById('note').value;
-      var selectedTargets = document.getElementById('checkAll').checked ? "Tất cả" : Array.from(document.querySelectorAll('.member-single-check:checked')).map(cb => cb.value);
+    // 4. Lấy lịch sử chi tiêu
+    if (action === 'getRecentExpenses' && req.method === 'GET') {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'LichSuChiTieu!A2:E200',
+      });
+      const rows = response.data.values || [];
+      const recent = rows.reverse().slice(0, 10).map(row => {
+        let dateStr = row[0];
+        try {
+          const d = new Date(row[0]);
+          dateStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+        } catch (e) {}
+        return {
+          time: dateStr,
+          description: row[1],
+          target: row[2],
+          amount: Number(row[3]) || 0
+        };
+      });
+      return res.status(200).json(recent);
+    }
 
-      if (!pass) return showToast("⚠️ Vui lòng nhập mật khẩu Admin!", "warning");
-      if (!desc || !amount || amount <= 0) return showToast("⚠️ Vui lòng nhập đầy đủ thông tin!", "warning");
-      if (Array.isArray(selectedTargets) && selectedTargets.length === 0) return showToast("⚠️ Vui lòng chọn ít nhất 1 thành viên!", "warning");
+    // 5. Thêm chi tiêu (Trừ tiền)
+    if (action === 'addExpense' && req.method === 'POST') {
+      const { password, description, targetList, amount, note } = req.body;
+      if (password !== ADMIN_PASSWORD) {
+        return res.status(400).json({ success: false, message: "Mật khẩu Admin không chính xác!" });
+      }
 
-      var btn = document.getElementById('btnSubmitExpense');
-      btn.disabled = true; btn.innerText = 'ĐANG XỬ LÝ...';
-
-      try {
-        const response = await fetch('/api/server?action=addExpense', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: pass, description: desc, targetList: selectedTargets, amount, note })
-        });
-        const res = await response.json();
-        btn.disabled = false; btn.innerText = 'XÁC NHẬN TRỪ TIỀN';
-        if (res.success) {
-          showToast("🎉 " + res.message, "success");
-          document.getElementById('desc').value = '';
-          document.getElementById('amount').value = '';
-          document.getElementById('note').value = '';
-          loadData();
-        } else {
-          showToast("⛔ " + res.message, "error");
+      const targetText = Array.isArray(targetList) ? targetList.join(', ') : targetList;
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'LichSuChiTieu!A:E',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [[new Date().toISOString(), description, targetText, Number(amount), note || '']]
         }
-      } catch (e) {
-        btn.disabled = false; btn.innerText = 'XÁC NHẬN TRỪ TIỀN';
-        showToast("Lỗi kết nối server!", "error");
-      }
+      });
+      return res.status(200).json({ success: true, message: "Đã trừ tiền thành công!" });
     }
 
-    async function submitDeposit() {
-      var pass = document.getElementById('adminPass').value;
-      var memberName = document.getElementById('depositMemberSelect').value;
-      var amount = getCleanNumber('depositAmount');
+    // 6. Cộng tiền đóng của thành viên
+    if (action === 'addMemberContribution' && req.method === 'POST') {
+      const { password, memberName, amount } = req.body;
+      if (password !== ADMIN_PASSWORD) {
+        return res.status(400).json({ success: false, message: "Mật khẩu Admin không chính xác!" });
+      }
 
-      if (!pass) return showToast("⚠️ Vui lòng nhập mật khẩu Admin!", "warning");
-      if (!memberName) return showToast("⚠️ Vui lòng chọn thành viên!", "warning");
-      if (!amount || amount <= 0) return showToast("⚠️ Vui lòng nhập số tiền hợp lệ!", "warning");
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'ThanhVien!A2:B100',
+      });
+      const rows = response.data.values || [];
+      let foundRowIndex = -1;
 
-      var btn = document.getElementById('btnSubmitDeposit');
-      btn.disabled = true; btn.innerText = 'ĐANG XỬ LÝ...';
-
-      try {
-        const response = await fetch('/api/server?action=addMemberContribution', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: pass, memberName, amount })
-        });
-        const res = await response.json();
-        btn.disabled = false; btn.innerText = 'XÁC NHẬN CỘNG TIỀN';
-        if (res.success) {
-          showToast("🎉 " + res.message, "success");
-          var memoText = removeVietnameseTones(memberName) + " dong quy du lich";
-          var qrUrl = `https://img.vietqr.io/image/${BANK_ID}-${ACCOUNT_NO}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(memoText)}&accountName=${encodeURIComponent(ACCOUNT_NAME)}`;
-          
-          document.getElementById('qrImage').src = qrUrl;
-          document.getElementById('qrMember').innerText = memberName;
-          document.getElementById('qrAmount').innerText = fmt(amount);
-          document.getElementById('qrMemo').innerText = memoText;
-          document.getElementById('qrModal').style.display = 'flex';
-          document.getElementById('depositAmount').value = '';
-          loadData();
-        } else {
-          showToast("⛔ " + res.message, "error");
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i][0] && rows[i][0].toString().trim() === memberName.trim()) {
+          foundRowIndex = i + 2;
+          break;
         }
-      } catch (e) {
-        btn.disabled = false; btn.innerText = 'XÁC NHẬN CỘNG TIỀN';
-        showToast("Lỗi kết nối server!", "error");
       }
+
+      if (foundRowIndex === -1) {
+        return res.status(400).json({ success: false, message: "Không tìm thấy thành viên trong danh sách!" });
+      }
+
+      const currentAmount = Number(rows[foundRowIndex - 2][1]) || 0;
+      const newTotal = currentAmount + Number(amount);
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `ThanhVien!B${foundRowIndex}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[newTotal]] }
+      });
+
+      return res.status(200).json({ 
+        success: true, 
+        message: "Đã nạp " + Number(amount).toLocaleString('vi-VN') + " đ cho " + memberName + " thành công!" 
+      });
     }
 
-    function closeQRModal() { document.getElementById('qrModal').style.display = 'none'; }
-
-    window.onload = loadData;
-  </script>
-</body>
-</html>
+    return res.status(404).json({ error: "API Endpoint không tồn tại" });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Lỗi Server: " + error.message });
+  }
+}
