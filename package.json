@@ -1,9 +1,0 @@
-{
-  "name": "travel-fund-app",
-  "version": "1.0.0",
-  "description": "Quản lý quỹ du lịch Vercel + Google Sheets",
-  "main": "api/server.js",
-  "dependencies": {
-    "googleapis": "^126.0.0"
-  }
-}
